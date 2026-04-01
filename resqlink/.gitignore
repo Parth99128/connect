@@ -1,0 +1,93 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+
+# Android build folders and caches
+/android/.gradle/
+/android/build/
+/android/.idea/
+/android/.tmp/
+/android/caches/
+/android/daemon/
+/android/kotlin-profile/
+/android/native/
+/android/wrapper/
+/android/android/
+/android/build/reports/
+
+# Kotlin compiler generated files
+/android/app/src/main/kotlin/com/example/resqlink/generated/
+*.kt.class
+*.kt.tmp
+
+# Additional Kotlin/Android build artifacts
+/android/app/build/
+/android/app/src/main/gen/
+/android/app/src/debug/gen/
+/android/app/src/release/gen/
+
+# gradle wrapper
+/android/gradle/wrapper/
+
+# local.properties (sdk paths etc, do not commit)
+/android/local.properties
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Firebase config files with secrets
+# android/app/google-services.json
+# ios/Runner/GoogleService-Info.plist
+
+# FMTC cache files
+*.mbtiles
+*.sqlite
+lib/data/cache/
+flutter_map_tile_caching/
+assets/maps/*.mbtiles

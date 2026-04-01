@@ -1,0 +1,607 @@
+import 'dart:convert';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+enum MessageStatus { pending, sent, delivered, failed, synced, received }
+
+enum MessageType { text, emergency, location, sos, system, file, voice }
+
+/// Message model with clear identifier architecture:
+/// - endpointId: Device's wlan0 MAC address (stable, used for routing/sessions)
+/// - fromUser: User's display name from landing page (used for UI display only)
+/// - targetDeviceId: Recipient's MAC address (null for broadcast)
+/// - deviceId: Same as endpointId (legacy compatibility)
+class MessageModel {
+  final int? id;
+
+  // CRITICAL: Identifier architecture
+  final String endpointId; // Sender's wlan0 MAC (routing/session ID)
+  final String fromUser; // Sender's display name (UI only)
+  final String message;
+  final bool isMe;
+  final bool isEmergency;
+  final int timestamp;
+  final double? latitude;
+  final double? longitude;
+  final bool synced;
+  final bool syncedToFirebase;
+  final String? messageId;
+  final String type;
+  final MessageStatus status;
+  final List<String>? routePath;
+  final int? ttl;
+  final String? connectionType;
+  final Map<String, dynamic>? deviceInfo;
+  final String? targetDeviceId; // Target MAC (null = broadcast)
+  final MessageType messageType;
+  final String? chatSessionId;
+  final String? deviceId; // Same as endpointId (legacy compat)
+
+  // Database-generated fields (read-only, not set in constructor)
+  final int? retryCount;
+  final int? lastRetryTime;
+  final int? priority;
+  final int? createdAt;
+
+  MessageModel({
+    this.id,
+    required this.endpointId, // MAC address (wlan0) - routing identifier
+    required this.fromUser, // Display name - UI only
+    required this.message,
+    required this.isMe,
+    required this.isEmergency,
+    required this.timestamp,
+    this.latitude,
+    this.longitude,
+    this.synced = false,
+    this.syncedToFirebase = false,
+    this.messageId,
+    String? type,
+    this.status = MessageStatus.pending,
+    this.routePath,
+    this.ttl,
+    this.connectionType,
+    this.deviceInfo,
+    this.targetDeviceId, // Target MAC (null = broadcast)
+    MessageType? messageType,
+    this.chatSessionId,
+    this.deviceId, // Same as endpointId (legacy)
+    // Database-generated fields
+    this.retryCount,
+    this.lastRetryTime,
+    this.priority,
+    this.createdAt,
+  }) : type = type ?? (isEmergency ? 'emergency' : 'message'),
+       messageType =
+           messageType ??
+           (isEmergency ? MessageType.emergency : MessageType.text);
+
+  // DateTime getter for convenience
+  DateTime get dateTime => DateTime.fromMillisecondsSinceEpoch(timestamp);
+
+  // Check if message has location
+  bool get hasLocation => latitude != null && longitude != null;
+
+  // Get computed message priority (for sorting/display)
+  int get computedPriority {
+    if (type == 'sos') return 3;
+    if (type == 'emergency' || isEmergency) return 2;
+    if (type == 'location') return 1;
+    return 0;
+  }
+
+  // copyWith method for immutability
+  MessageModel copyWith({
+    int? id,
+    String? endpointId,
+    String? fromUser,
+    String? message,
+    bool? isMe,
+    bool? isEmergency,
+    int? timestamp,
+    double? latitude,
+    double? longitude,
+    bool? synced,
+    bool? syncedToFirebase,
+    String? messageId,
+    String? type,
+    MessageStatus? status,
+    List<String>? routePath,
+    int? ttl,
+    String? connectionType,
+    Map<String, dynamic>? deviceInfo,
+    String? targetDeviceId,
+    MessageType? messageType,
+    String? chatSessionId,
+    String? deviceId,
+    int? retryCount,
+    int? lastRetryTime,
+    int? priority,
+    int? createdAt,
+  }) {
+    return MessageModel(
+      id: id ?? this.id,
+      endpointId: endpointId ?? this.endpointId,
+      fromUser: fromUser ?? this.fromUser,
+      message: message ?? this.message,
+      isMe: isMe ?? this.isMe,
+      isEmergency: isEmergency ?? this.isEmergency,
+      timestamp: timestamp ?? this.timestamp,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      synced: synced ?? this.synced,
+      syncedToFirebase: syncedToFirebase ?? this.syncedToFirebase,
+      messageId: messageId ?? this.messageId,
+      type: type ?? this.type,
+      status: status ?? this.status,
+      routePath: routePath ?? this.routePath,
+      ttl: ttl ?? this.ttl,
+      connectionType: connectionType ?? this.connectionType,
+      deviceInfo: deviceInfo ?? this.deviceInfo,
+      targetDeviceId: targetDeviceId ?? this.targetDeviceId,
+      messageType: messageType ?? this.messageType,
+      chatSessionId: chatSessionId ?? this.chatSessionId,
+      deviceId: deviceId ?? this.deviceId,
+      retryCount: retryCount ?? this.retryCount,
+      lastRetryTime: lastRetryTime ?? this.lastRetryTime,
+      priority: priority ?? this.priority,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  // Convert to Map for database storage (matches exact database schema)
+  Map<String, dynamic> toMap() {
+    return {
+      if (id != null) 'id': id,
+      'messageId': messageId,
+      'endpointId': endpointId,
+      'fromUser': fromUser,
+      'message': message,
+      'timestamp': timestamp,
+      'isMe': isMe ? 1 : 0,
+      'isEmergency': isEmergency ? 1 : 0,
+      'type': type,
+      'status': status.index,
+      'latitude': latitude,
+      'longitude': longitude,
+      'routePath': routePath?.join(','),
+      'ttl': ttl,
+      'connectionType': connectionType,
+      'deviceInfo': deviceInfo != null ? jsonEncode(deviceInfo!) : null,
+      'targetDeviceId': targetDeviceId,
+      'messageType': messageType.index,
+      'chatSessionId': chatSessionId,
+      'synced': synced ? 1 : 0,
+      'syncedToFirebase': syncedToFirebase ? 1 : 0,
+      'deviceId': deviceId,
+      // NOTE: retryCount, lastRetryTime, priority, createdAt are database-generated fields
+      // They don't need to be in the insert map, but can be read from query results
+    };
+  }
+
+  // Create from database Map (matches exact database schema)
+  factory MessageModel.fromMap(Map<String, dynamic> map) {
+    return MessageModel(
+      id: map['id'],
+      messageId: map['messageId'],
+      endpointId: map['endpointId'] ?? '',
+      fromUser: map['fromUser'] ?? '',
+      message: map['message'] ?? '',
+      timestamp: map['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+      isMe: map['isMe'] == 1,
+      isEmergency: map['isEmergency'] == 1,
+      type: map['type'] ?? 'message',
+      status: map['status'] != null
+          ? (map['status'] is int
+                ? MessageStatus.values[map['status']]
+                : MessageStatus.values.firstWhere(
+                    (e) => e.name == map['status'],
+                    orElse: () => MessageStatus.pending,
+                  ))
+          : MessageStatus.pending,
+      latitude: map['latitude']?.toDouble(),
+      longitude: map['longitude']?.toDouble(),
+      routePath: map['routePath'] != null && map['routePath'] != ''
+          ? (map['routePath'] as String).split(',')
+          : null,
+      ttl: map['ttl'],
+      connectionType: map['connectionType'],
+      deviceInfo: map['deviceInfo'] != null
+          ? jsonDecode(map['deviceInfo'])
+          : null,
+      targetDeviceId: map['targetDeviceId'],
+      messageType: map['messageType'] != null
+          ? (map['messageType'] is int
+                ? MessageType.values[map['messageType']]
+                : MessageType.values.firstWhere(
+                    (e) => e.name == map['messageType'],
+                    orElse: () => MessageType.text,
+                  ))
+          : MessageType.text,
+      chatSessionId: map['chatSessionId'],
+      synced: map['synced'] == 1,
+      syncedToFirebase: map['syncedToFirebase'] == 1,
+      deviceId: map['deviceId'],
+      // Database-generated fields (may be null for new messages)
+      retryCount: map['retryCount'],
+      lastRetryTime: map['lastRetryTime'],
+      priority: map['priority'],
+      createdAt: map['createdAt'],
+    );
+  }
+
+  // Create from enhanced database Map
+  factory MessageModel.fromDatabase(Map<String, dynamic> map) {
+    return MessageModel(
+      id: map['id'],
+      endpointId: map['endpointId'] ?? '',
+      fromUser: map['fromUser'] ?? '',
+      message: map['message'] ?? '',
+      isMe: map['isMe'] == 1,
+      isEmergency: map['isEmergency'] == 1,
+      timestamp: map['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+      latitude: map['latitude']?.toDouble(),
+      longitude: map['longitude']?.toDouble(),
+      synced: map['synced'] == 1,
+      syncedToFirebase: map['syncedToFirebase'] == 1,
+      messageId: map['messageId'],
+      type: map['type'] ?? 'message',
+      status: map['status'] is String
+          ? MessageStatus.values.firstWhere(
+              (e) => e.name == map['status'],
+              orElse: () => MessageStatus.pending,
+            )
+          : MessageStatus.pending,
+      routePath: map['routePath'] != null
+          ? List<String>.from(jsonDecode(map['routePath']))
+          : null,
+      ttl: map['ttl'],
+      connectionType: map['connectionType'],
+      deviceInfo: map['deviceInfo'] != null
+          ? jsonDecode(map['deviceInfo'])
+          : null,
+      targetDeviceId: map['targetDeviceId'],
+      messageType: map['messageType'] is String
+          ? MessageType.values.firstWhere(
+              (e) => e.name == map['messageType'],
+              orElse: () => MessageType.text,
+            )
+          : MessageType.text,
+      chatSessionId: map['chatSessionId'],
+      deviceId: map['deviceId'],
+      retryCount: map['retryCount'],
+      lastRetryTime: map['lastRetryTime'],
+      priority: map['priority'],
+      createdAt: map['createdAt'],
+    );
+  }
+
+  // Convert to Firebase format
+  Map<String, dynamic> toFirebaseJson() {
+    return {
+      'endpointId': endpointId,
+      'fromUser': fromUser,
+      'message': message,
+      'isEmergency': isEmergency,
+      'timestamp': timestamp,
+      'latitude': latitude,
+      'longitude': longitude,
+      'type': type,
+      'messageId': messageId ?? '${endpointId}_$timestamp',
+      'status': status.name,
+      'routePath': routePath,
+      'ttl': ttl,
+      'connectionType': connectionType,
+      'deviceInfo': deviceInfo,
+      'targetDeviceId': targetDeviceId,
+      'deviceId': deviceId,
+    };
+  }
+
+  // Convert to Firebase document
+  Map<String, dynamic> toFirebase() {
+    return {
+      'endpointId': endpointId,
+      'fromUser': fromUser,
+      'message': message,
+      'isEmergency': isEmergency,
+      'timestamp': timestamp,
+      'latitude': latitude,
+      'longitude': longitude,
+      'type': type,
+      'messageId': messageId ?? '${endpointId}_$timestamp',
+      'status': status.name,
+      'routePath': routePath,
+      'ttl': ttl,
+      'connectionType': connectionType,
+      'deviceInfo': deviceInfo,
+      'targetDeviceId': targetDeviceId,
+      'deviceId': deviceId,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+  }
+
+  @override
+  String toString() {
+    return 'MessageModel(id: $id, endpointId: $endpointId, fromUser: $fromUser, '
+        'message: $message, isMe: $isMe, isEmergency: $isEmergency, '
+        'timestamp: $timestamp, latitude: $latitude, longitude: $longitude, '
+        'synced: $synced, syncedToFirebase: $syncedToFirebase, '
+        'messageId: $messageId, type: $type, status: $status, '
+        'routePath: $routePath, ttl: $ttl, connectionType: $connectionType)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is MessageModel &&
+        other.messageId == messageId &&
+        other.endpointId == endpointId &&
+        other.timestamp == timestamp;
+  }
+
+  @override
+  int get hashCode {
+    return messageId.hashCode ^ endpointId.hashCode ^ timestamp.hashCode;
+  }
+
+  // Network transmission methods
+  Map<String, dynamic> toNetworkJson() {
+    return {
+      'messageId': messageId ?? '${endpointId}_$timestamp',
+      'endpointId': endpointId,
+      'fromUser': fromUser,
+      'message': message,
+      'isMe': isMe,
+      'isEmergency': isEmergency,
+      'timestamp': timestamp,
+      'latitude': latitude,
+      'longitude': longitude,
+      'type': type,
+      'messageType': messageType.name,
+      'status': status.name,
+      'routePath': routePath,
+      'ttl': ttl,
+      'targetDeviceId': targetDeviceId,
+      'connectionType': connectionType,
+      'deviceInfo': deviceInfo,
+      'deviceId': deviceId,
+    };
+  }
+
+  factory MessageModel.fromNetworkJson(Map<String, dynamic> json) {
+    return MessageModel(
+      messageId: json['messageId'],
+      endpointId: json['endpointId'] ?? '',
+      fromUser: json['fromUser'] ?? '',
+      message: json['message'] ?? '',
+      isMe: json['isMe'] ?? false,
+      isEmergency: json['isEmergency'] ?? false,
+      timestamp: json['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+      latitude: json['latitude']?.toDouble(),
+      longitude: json['longitude']?.toDouble(),
+      type: json['type'] ?? 'message',
+      messageType: json['messageType'] != null
+          ? MessageType.values.firstWhere(
+              (e) => e.name == json['messageType'],
+              orElse: () => MessageType.text,
+            )
+          : MessageType.text,
+      status: json['status'] != null
+          ? MessageStatus.values.firstWhere(
+              (e) => e.name == json['status'],
+              orElse: () => MessageStatus.pending,
+            )
+          : MessageStatus.pending,
+      routePath: json['routePath'] != null
+          ? List<String>.from(json['routePath'])
+          : null,
+      ttl: json['ttl'],
+      targetDeviceId: json['targetDeviceId'],
+      connectionType: json['connectionType'],
+      deviceInfo: json['deviceInfo'],
+      deviceId: json['deviceId'],
+    );
+  }
+
+  // Generate unique message ID
+  static String generateMessageId(String deviceId) {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final random = timestamp.hashCode;
+    return 'msg_${timestamp}_${deviceId.hashCode}_$random';
+  }
+
+  // Create a broadcast message (no specific target)
+  static MessageModel createBroadcastMessage({
+    required String fromUser,
+    required String message,
+    required String deviceId,
+    MessageType type = MessageType.text,
+    bool isEmergency = false,
+    double? latitude,
+    double? longitude,
+  }) {
+    return MessageModel(
+      messageId: generateMessageId(deviceId),
+      endpointId: 'broadcast',
+      fromUser: fromUser,
+      message: message,
+      isMe: true,
+      isEmergency: isEmergency,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      latitude: latitude,
+      longitude: longitude,
+      messageType: type,
+      type: type.name,
+      ttl: 5,
+      routePath: [deviceId],
+      deviceId: deviceId,
+    );
+  }
+
+  factory MessageModel.fromJson(Map<String, dynamic> json) {
+    if (json.containsKey('messageId') && !json.containsKey('id')) {
+      return MessageModel.fromNetworkJson(json);
+    } else {
+      return MessageModel.fromMap(json);
+    }
+  }
+
+  // Create a direct message to specific device
+  static MessageModel createDirectMessage({
+    required String fromUser,
+    required String message,
+    required String deviceId,
+    required String targetDeviceId,
+    MessageType type = MessageType.text,
+    bool isEmergency = false,
+    double? latitude,
+    double? longitude,
+  }) {
+    return MessageModel(
+      messageId: generateMessageId(deviceId),
+      endpointId: targetDeviceId,
+      targetDeviceId: targetDeviceId,
+      fromUser: fromUser,
+      message: message,
+      isMe: true,
+      isEmergency: isEmergency,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      latitude: latitude,
+      longitude: longitude,
+      messageType: type,
+      type: type.name,
+      ttl: 5,
+      routePath: [deviceId],
+      deviceId: deviceId,
+    );
+  }
+}
+
+/// Represents a pending message for P2P communication
+class PendingMessage {
+  final String messageId;
+  final String targetDeviceId;
+  final String message;
+  final DateTime timestamp;
+  final MessageType type;
+  final int retryCount;
+  final Map<String, dynamic>? metadata;
+
+  PendingMessage({
+    required this.messageId,
+    required this.targetDeviceId,
+    required this.message,
+    required this.timestamp,
+    required this.type,
+    this.retryCount = 0,
+    this.metadata,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'messageId': messageId,
+      'targetDeviceId': targetDeviceId,
+      'message': message,
+      'timestamp': timestamp.millisecondsSinceEpoch,
+      'type': type.name,
+      'retryCount': retryCount,
+      'metadata': metadata,
+    };
+  }
+
+  factory PendingMessage.fromJson(Map<String, dynamic> json) {
+    return PendingMessage(
+      messageId: json['messageId'],
+      targetDeviceId: json['targetDeviceId'],
+      message: json['message'],
+      timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp']),
+      type: MessageType.values.firstWhere(
+        (e) => e.name == json['type'],
+        orElse: () => MessageType.text,
+      ),
+      retryCount: json['retryCount'] ?? 0,
+      metadata: json['metadata'],
+    );
+  }
+
+  PendingMessage copyWith({
+    String? messageId,
+    String? targetDeviceId,
+    String? message,
+    DateTime? timestamp,
+    MessageType? type,
+    int? retryCount,
+    Map<String, dynamic>? metadata,
+  }) {
+    return PendingMessage(
+      messageId: messageId ?? this.messageId,
+      targetDeviceId: targetDeviceId ?? this.targetDeviceId,
+      message: message ?? this.message,
+      timestamp: timestamp ?? this.timestamp,
+      type: type ?? this.type,
+      retryCount: retryCount ?? this.retryCount,
+      metadata: metadata ?? this.metadata,
+    );
+  }
+}
+
+/// Represents a P2P message for database operations
+class P2PMessage {
+  final String id;
+  final String senderId;
+  final String senderName;
+  final String message;
+  final MessageType type;
+  final DateTime timestamp;
+  final bool isEmergency;
+  final double? latitude;
+  final double? longitude;
+  final Map<String, dynamic>? metadata;
+
+  P2PMessage({
+    required this.id,
+    required this.senderId,
+    required this.senderName,
+    required this.message,
+    required this.type,
+    required this.timestamp,
+    this.isEmergency = false,
+    this.latitude,
+    this.longitude,
+    this.metadata,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'senderId': senderId,
+      'senderName': senderName,
+      'message': message,
+      'type': type.name,
+      'timestamp': timestamp.millisecondsSinceEpoch,
+      'isEmergency': isEmergency,
+      'latitude': latitude,
+      'longitude': longitude,
+      'metadata': metadata,
+    };
+  }
+
+  factory P2PMessage.fromJson(Map<String, dynamic> json) {
+    return P2PMessage(
+      id: json['id'],
+      senderId: json['senderId'],
+      senderName: json['senderName'],
+      message: json['message'],
+      type: MessageType.values.firstWhere(
+        (e) => e.name == json['type'],
+        orElse: () => MessageType.text,
+      ),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp']),
+      isEmergency: json['isEmergency'] ?? false,
+      latitude: json['latitude']?.toDouble(),
+      longitude: json['longitude']?.toDouble(),
+      metadata: json['metadata'],
+    );
+  }
+}

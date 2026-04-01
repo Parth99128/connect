@@ -1,0 +1,590 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:resqlink/features/chat/services/chat_service.dart';
+import 'package:resqlink/features/database/repositories/chat_repository.dart';
+
+import '../../controllers/gps_controller.dart';
+import '../../models/message_model.dart';
+import '../../pages/gps_page.dart';
+import '../../services/location_state_service.dart';
+import '../../services/p2p/p2p_base_service.dart';
+import '../../services/p2p/p2p_main_service.dart';
+import '../../utils/responsive_helper.dart';
+import '../../utils/resqlink_theme.dart';
+
+class EmergencyActionsCard extends StatefulWidget {
+  final P2PMainService p2pService;
+  final Function(EmergencyTemplate)? onEmergencyMessage;
+
+  const EmergencyActionsCard({
+    super.key,
+    required this.p2pService,
+    this.onEmergencyMessage,
+  });
+
+  @override
+  State<EmergencyActionsCard> createState() => _EmergencyActionsCardState();
+}
+
+class _EmergencyActionsCardState extends State<EmergencyActionsCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  bool _isLoading = false;
+  final LocationStateService _locationStateService = LocationStateService();
+
+  LocationModel? get _currentLocation => _locationStateService.currentLocation;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeAnimations();
+  }
+
+  void _initializeAnimations() {
+    _pulseController = AnimationController(
+      duration: Duration(milliseconds: 1500),
+      vsync: this,
+    );
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.05).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Card(
+          elevation: 8,
+          margin: ResponsiveHelper.getCardMargins(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Container(
+            constraints: ResponsiveHelper.getCardConstraints(context),
+            decoration: _buildCardDecoration(),
+            child: Padding(
+              padding: ResponsiveHelper.getCardPadding(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context),
+                  SizedBox(height: ResponsiveHelper.getContentSpacing(context)),
+                  _buildEmergencyGrid(context),
+                  SizedBox(height: ResponsiveHelper.getContentSpacing(context)),
+                  _buildConnectionStatus(context),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  BoxDecoration _buildCardDecoration() {
+    return BoxDecoration(
+      borderRadius: BorderRadius.circular(20),
+      gradient: LinearGradient(
+        colors: [
+          ResQLinkTheme.emergencyOrange.withValues(alpha: 0.08),
+          ResQLinkTheme.primaryRed.withValues(alpha: 0.05),
+        ],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+      border: Border.all(
+        color: ResQLinkTheme.emergencyOrange.withValues(alpha: 0.15),
+        width: 1,
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: ResQLinkTheme.emergencyOrange.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            Icons.emergency,
+            color: ResQLinkTheme.emergencyOrange,
+            size: ResponsiveHelper.getIconSize(context),
+          ),
+        ),
+        SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Emergency Actions',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: ResponsiveHelper.getTitleSize(context),
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'Rajdhani',
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+              Text(
+                'Quick emergency message broadcast',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: ResponsiveHelper.getSubtitleSize(context),
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ],
+          ),
+        ),
+        if (_isLoading)
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                ResQLinkTheme.emergencyOrange,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildEmergencyGrid(BuildContext context) {
+    final isNarrow = ResponsiveHelper.isTablet(context) == false;
+
+    return GridView.count(
+      shrinkWrap: true,
+      physics: NeverScrollableScrollPhysics(),
+      crossAxisCount: isNarrow ? 2 : 4,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 12,
+      childAspectRatio: isNarrow ? 1.2 : 1.0,
+      children: [
+        _buildEmergencyButton(
+          context: context,
+          label: 'SOS',
+          icon: Icons.sos,
+          color: ResQLinkTheme.primaryRed,
+          template: EmergencyTemplate.sos,
+          priority: true,
+        ),
+        _buildEmergencyButton(
+          context: context,
+          label: 'Trapped',
+          icon: Icons.warning_amber_outlined,
+          color: ResQLinkTheme.emergencyOrange,
+          template: EmergencyTemplate.trapped,
+        ),
+        _buildEmergencyButton(
+          context: context,
+          label: 'Medical',
+          icon: Icons.medical_services_outlined,
+          color: ResQLinkTheme.locationBlue,
+          template: EmergencyTemplate.medical,
+        ),
+        _buildEmergencyButton(
+          context: context,
+          label: 'Safe',
+          icon: Icons.check_circle_outline,
+          color: ResQLinkTheme.safeGreen,
+          template: EmergencyTemplate.safe,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmergencyButton({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required Color color,
+    required EmergencyTemplate template,
+    bool priority = false,
+  }) {
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: priority && _pulseController.isAnimating
+              ? _pulseAnimation.value
+              : 1.0,
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(16),
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: _isLoading ? null : () => _handleEmergencyAction(template),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: LinearGradient(
+                    colors: [
+                      color.withValues(alpha: 0.8),
+                      color.withValues(alpha: 0.6),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: color.withValues(alpha: 0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      color: Colors.white,
+                      size: ResponsiveHelper.isTablet(context) ? 32 : 28,
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: ResponsiveHelper.isTablet(context) ? 14 : 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildConnectionStatus(BuildContext context) {
+    final connectedDevices = widget.p2pService.connectedDevices.length;
+    final isConnected = widget.p2pService.isConnected;
+
+    return Container(
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isConnected
+            ? ResQLinkTheme.safeGreen.withValues(alpha: 0.1)
+            : ResQLinkTheme.offlineGray.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isConnected
+              ? ResQLinkTheme.safeGreen.withValues(alpha: 0.2)
+              : ResQLinkTheme.offlineGray.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isConnected ? Icons.wifi : Icons.wifi_off,
+            color: isConnected
+                ? ResQLinkTheme.safeGreen
+                : ResQLinkTheme.offlineGray,
+            size: 16,
+          ),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              isConnected
+                  ? 'Ready to send to $connectedDevices connected device${connectedDevices == 1 ? '' : 's'}'
+                  : 'No connections - messages will be queued',
+              style: TextStyle(
+                color: isConnected
+                    ? ResQLinkTheme.safeGreen
+                    : ResQLinkTheme.offlineGray,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleEmergencyAction(EmergencyTemplate template) async {
+    if (_isLoading) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Haptic feedback for emergency actions
+      await HapticFeedback.mediumImpact();
+
+      // Start pulse animation for SOS
+      if (template == EmergencyTemplate.sos) {
+        _pulseController.repeat(reverse: true);
+      }
+
+      // Send emergency message
+      await _sendEmergencyMessage(template);
+
+      // Call original callback if provided
+      widget.onEmergencyMessage?.call(template);
+
+      // Show success feedback with device count
+      final connectedCount = widget.p2pService.connectedDevices.length;
+      final successMessage = connectedCount > 0
+          ? 'Emergency message sent to $connectedCount device${connectedCount == 1 ? '' : 's'}'
+          : 'Emergency message queued for delivery';
+
+      _showSuccessSnackBar(successMessage);
+
+      // Stop pulse animation after delay
+      if (template == EmergencyTemplate.sos) {
+        Future.delayed(Duration(seconds: 3), () {
+          if (mounted) {
+            _pulseController.stop();
+            _pulseController.reset();
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Emergency message failed: $e');
+      _showErrorSnackBar('Failed to send emergency message');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _sendEmergencyMessage(EmergencyTemplate template) async {
+    // Get GPS controller from context
+    final gpsController = context.read<GpsController>();
+
+    // Refresh both location services
+    await _locationStateService.refreshLocation();
+    await gpsController.getCurrentLocation();
+
+    final messageText = _getEmergencyMessage(template);
+    final messageType = template == EmergencyTemplate.sos
+        ? MessageType.sos
+        : MessageType.emergency;
+
+    final connectedDevices = widget.p2pService.connectedDevices;
+    final chatService = ChatService();
+    final senderName = widget.p2pService.userName ?? 'Emergency User';
+
+    // Get current GPS coordinates from GPS controller (primary) or location state (fallback)
+    double? latitude =
+        gpsController.lastKnownLocation?.latitude ?? _currentLocation?.latitude;
+    double? longitude =
+        gpsController.lastKnownLocation?.longitude ??
+        _currentLocation?.longitude;
+
+    debugPrint('🚨 Sending emergency message: $messageText');
+    debugPrint('📱 Connected devices: ${connectedDevices.keys.toList()}');
+    if (latitude != null && longitude != null) {
+      debugPrint('📍 Including GPS location: $latitude, $longitude');
+    } else {
+      debugPrint('⚠️ No GPS location available - sending without coordinates');
+    }
+
+    // CRITICAL FIX: Always try to send as broadcast if no specific devices
+    if (connectedDevices.isEmpty) {
+      debugPrint(
+        '⚠️ No connected devices - broadcasting emergency message anyway',
+      );
+      try {
+        await widget.p2pService.sendMessage(
+          message: messageText,
+          type: messageType,
+          senderName: senderName,
+          latitude: latitude,
+          longitude: longitude,
+          // Try broadcast to any available connections
+        );
+        debugPrint('✅ Emergency broadcast attempted');
+      } catch (e) {
+        debugPrint('❌ Emergency broadcast failed: $e');
+      }
+      return;
+    }
+
+    // Send to all connected devices individually for chat persistence
+    debugPrint(
+      '📢 Broadcasting emergency message to ${connectedDevices.length} connected devices',
+    );
+
+    // Save to each device's chat session (for chat history)
+    for (final entry in connectedDevices.entries) {
+      final deviceId = entry.key;
+      final device = entry.value;
+
+      // Fetch fresh display name from database first
+      String deviceName = 'Unknown Device';
+      try {
+        final session = await ChatRepository.getSessionByDeviceId(deviceId);
+        if (session != null && session.deviceName.isNotEmpty) {
+          deviceName = session.deviceName;
+        } else {
+          // Fallback to cached name
+          final resolvedName = device.userName.isNotEmpty
+              ? device.userName
+              : (device.deviceInfo?['deviceName'] as String?)?.trim();
+          deviceName = (resolvedName == null || resolvedName.isEmpty)
+              ? 'Unknown Device'
+              : resolvedName;
+        }
+      } catch (e) {
+        debugPrint(
+          '⚠️ Failed to fetch display name for emergency broadcast to $deviceId: $e',
+        );
+        // Use cached name as fallback
+        final resolvedName = device.userName.isNotEmpty
+            ? device.userName
+            : (device.deviceInfo?['deviceName'] as String?)?.trim();
+        deviceName = (resolvedName == null || resolvedName.isEmpty)
+            ? 'Unknown Device'
+            : resolvedName;
+      }
+
+      try {
+        final sessionId = await chatService.createOrGetSession(
+          deviceId: deviceId,
+          deviceName: deviceName,
+          deviceAddress: deviceId,
+          currentUserId: 'local',
+          currentUserName: senderName,
+          peerUserName: deviceName,
+        );
+
+        if (sessionId != null) {
+          final saved = await chatService.sendMessage(
+            sessionId: sessionId,
+            message: messageText,
+            type: messageType,
+            fromUser: senderName,
+            targetDeviceId: deviceId,
+            latitude: latitude,
+            longitude: longitude,
+          );
+          if (!saved) {
+            debugPrint('⚠️ Failed to persist emergency message for $deviceId');
+          }
+        }
+      } catch (e) {
+        debugPrint(
+          '❌ Failed to save emergency message to chat for $deviceId: $e',
+        );
+      }
+    }
+
+    // ✅ CRITICAL FIX: Send as TRUE BROADCAST for multi-hop mesh forwarding
+    // NO targetDeviceId = allows intermediate nodes to forward to others
+    try {
+      await widget.p2pService.sendMessage(
+        message: messageText,
+        type: messageType,
+        senderName: senderName,
+        latitude: latitude,
+        longitude: longitude,
+        ttl: 5, // ✅ 5 hops max for mesh network
+        // targetDeviceId: null (omitted) = BROADCAST mode enables multi-hop
+      );
+      debugPrint('✅ Emergency broadcast completed (multi-hop enabled)');
+    } catch (e) {
+      debugPrint('❌ Emergency broadcast failed: $e');
+    }
+  }
+
+  String _getEmergencyMessage(EmergencyTemplate template) {
+    // Get location to append to message
+    final gpsController = context.read<GpsController>();
+    final latitude =
+        gpsController.lastKnownLocation?.latitude ?? _currentLocation?.latitude;
+    final longitude =
+        gpsController.lastKnownLocation?.longitude ??
+        _currentLocation?.longitude;
+
+    String locationText = '';
+    if (latitude != null && longitude != null) {
+      locationText =
+          '\n📍 Location: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
+    }
+
+    switch (template) {
+      case EmergencyTemplate.sos:
+        return '🚨 SOS - I need immediate help!$locationText';
+      case EmergencyTemplate.trapped:
+        return '⚠️ I am trapped and need assistance!$locationText';
+      case EmergencyTemplate.medical:
+        return '🏥 Medical emergency - I need medical help!$locationText';
+      case EmergencyTemplate.safe:
+        return '✅ I am safe and secure$locationText';
+      case EmergencyTemplate.evacuating:
+        return '🚶 Evacuating area - proceeding to safety$locationText';
+    }
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: ResQLinkTheme.safeGreen,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.error, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: ResQLinkTheme.primaryRed,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+}
