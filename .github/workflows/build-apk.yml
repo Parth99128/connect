@@ -33,8 +33,11 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Create dummy .env file
-        run: touch .env
+      - name: Create real .env file from Secrets
+        run: |
+          echo "FIREBASE_API_KEY_ANDROID=${{ secrets.FIREBASE_API_KEY_ANDROID }}" > .env
+          echo "FIREBASE_API_KEY_IOS=${{ secrets.FIREBASE_API_KEY_IOS }}" >> .env
+          echo "FIREBASE_API_KEY_WEB=${{ secrets.FIREBASE_API_KEY_WEB }}" >> .env
 
       - name: Install dependencies
         run: flutter pub get
