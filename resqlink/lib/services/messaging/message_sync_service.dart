@@ -16,7 +16,7 @@ class MessageSyncService {
   factory MessageSyncService() => _instance;
   MessageSyncService._internal();
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
   Timer? _syncTimer;
   Timer? _retryTimer;
   StreamSubscription? _connectivitySubscription;

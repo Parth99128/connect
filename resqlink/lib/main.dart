@@ -28,8 +28,13 @@ import 'widgets/auth/auth_wrapper.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load environment variables
-  await dotenv.load(fileName: ".env");
+  try {
+    // Load environment variables
+    await dotenv.load(fileName: ".env");
+    debugPrint('✅ Environment variables loaded');
+  } catch (e) {
+    debugPrint('⚠️ Warning: Failed to load .env file: $e');
+  }
 
   try {
     debugPrint('🔥 Initializing Firebase...');

@@ -1,20 +1,34 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 
 class FirebaseAuthHelper {
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static FirebaseAuth? get _auth {
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        return FirebaseAuth.instance;
+      }
+    } catch (e) {
+      debugPrint('Firebase not initialized: $e');
+    }
+    return null;
+  }
 
-  static Stream<User?> get authStateChanges => _auth.authStateChanges();
-  static User? get currentUser => _auth.currentUser;
+  static Stream<User?> get authStateChanges => _auth?.authStateChanges() ?? Stream.empty();
+  
+  static User? get currentUser => _auth?.currentUser;
 
   // Check if user is logged in
-  static bool get isLoggedIn => _auth.currentUser != null;
+  static bool get isLoggedIn => _auth?.currentUser != null;
 
   static Future<User?> registerUser(String email, String password) async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+    
     try {
       debugPrint('📝 Firebase registration attempt: $email');
       
-      final credential = await _auth.createUserWithEmailAndPassword(
+      final credential = await auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
@@ -31,10 +45,13 @@ class FirebaseAuthHelper {
   }
 
  static Future<User?> loginUser(String email, String password) async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+
     try {
       debugPrint('🔐 Firebase login attempt: $email');
       
-      final credential = await _auth.signInWithEmailAndPassword(
+      final credential = await auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
@@ -73,11 +90,13 @@ class FirebaseAuthHelper {
     }
   }
 
-
   // Logout user
   static Future<void> logoutUser() async {
+    final auth = _auth;
+    if (auth == null) return;
+    
     try {
-      await _auth.signOut();
+      await auth.signOut();
       print("User logged out successfully!");
     } catch (e) {
       print("Error during logout: $e");
@@ -87,8 +106,11 @@ class FirebaseAuthHelper {
 
   // Reset password
   static Future<void> resetPassword(String email) async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+    
     try {
-      await _auth.sendPasswordResetEmail(email: email);
+      await auth.sendPasswordResetEmail(email: email);
       print("Password reset email sent!");
     } on FirebaseAuthException catch (e) {
       print(
@@ -111,8 +133,11 @@ class FirebaseAuthHelper {
 
   // Delete user account
   static Future<void> deleteUser() async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+    
     try {
-      final User? user = _auth.currentUser;
+      final User? user = auth.currentUser;
       if (user != null) {
         await user.delete();
         print("User account deleted successfully!");
@@ -138,8 +163,11 @@ class FirebaseAuthHelper {
 
   // Update user email
   static Future<void> updateEmail(String newEmail) async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+    
     try {
-      final User? user = _auth.currentUser;
+      final User? user = auth.currentUser;
       if (user != null) {
         // Send verification email to new address
         await user.verifyBeforeUpdateEmail(newEmail);
@@ -174,8 +202,11 @@ class FirebaseAuthHelper {
 
   // Update user password
   static Future<void> updatePassword(String newPassword) async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+    
     try {
-      final User? user = _auth.currentUser;
+      final User? user = auth.currentUser;
       if (user != null) {
         await user.updatePassword(newPassword);
         print("Password updated successfully!");
@@ -203,8 +234,11 @@ class FirebaseAuthHelper {
 
   // Send email verification
   static Future<void> sendEmailVerification() async {
+    final auth = _auth;
+    if (auth == null) throw Exception('Firebase is not initialized (offline mode).');
+    
     try {
-      final User? user = _auth.currentUser;
+      final User? user = auth.currentUser;
       if (user != null && !user.emailVerified) {
         await user.sendEmailVerification();
         print("Email verification sent!");
@@ -220,12 +254,12 @@ class FirebaseAuthHelper {
   }
 
   // Check if email is verified
-  static bool get isEmailVerified => _auth.currentUser?.emailVerified ?? false;
+  static bool get isEmailVerified => _auth?.currentUser?.emailVerified ?? false;
 
   // Reload user to get updated information
   static Future<void> reloadUser() async {
     try {
-      await _auth.currentUser?.reload();
+      await _auth?.currentUser?.reload();
     } catch (e) {
       print("Error reloading user: $e");
     }

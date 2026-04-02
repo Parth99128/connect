@@ -382,7 +382,7 @@ class LocationService {
 }
 
 class FirebaseLocationService {
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static FirebaseFirestore get _firestore => FirebaseFirestore.instance;
 
   static Future<void> syncLocation(LocationModel location) async {
     try {

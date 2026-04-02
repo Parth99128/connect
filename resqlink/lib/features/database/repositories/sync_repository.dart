@@ -17,7 +17,7 @@ class SyncRepository {
   static const String _syncQueueTable = 'sync_queue';
 
   // Firebase integration
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static FirebaseFirestore get _firestore => FirebaseFirestore.instance;
   static StreamSubscription? _connectivitySubscription;
   static bool _isOnline = false;
   static bool _syncInProgress = false;
